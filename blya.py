@@ -1,7 +1,8 @@
 import json
 import os
 import tweepy
-import time
+from time import time, sleep
+from re import sub
 
 from tweepy import OAuthHandler
 
@@ -11,14 +12,14 @@ if not os.path.exists(datadir):
 
 credsdir = 'credentials'
 
-cred_names = ["consumer_key", "consumer_secret", "access_token", "access_secret"]
+cred_names = ["consumer_key", "consumer_secret",
+              "access_token", "access_secret"]
 default_creds = {zip(cred_names, cred_names)}
 
 
 def get_credentials(filename=None):
     if filename:
         creds = json.loads(open(filename).read())
-
     else:
         try:
             cred_values = [os.environ['TWITTER_CONSUMER_KEY'], os.environ['TWITTER_CONSUMER_SECRET'],
@@ -65,12 +66,25 @@ def make_filters_dict(filters: dict) -> dict:
     }
 
     if filters:
-        for k, v in filters.items(): f[k] = v
+        for k, v in filters.items():
+            f[k] = v
 
         if type(f['languages']) == type('str'):
             f['languages'] = [f['languages']]
 
     return f
+
+
+def check_tweepy_data_json(data: dict) -> bool:
+    """
+    data (dict): A dictionary (probably, raw Tweepy data laded with json library).
+    returns: True or False – if by the given json we can make a conclusion its corresponding tweet is okay.
+    """
+    return not ('text' not in data.keys() or data['in_reply_to_status_id'] or data['is_quote_status'])
+    # if 'text' not in data.keys() or data['in_reply_to_status_id'] or data['is_quote_status']:
+    #     return False
+    # else:
+    #     return True    
 
 
 class TweepyListener(tweepy.streaming.StreamListener):
@@ -80,61 +94,67 @@ class TweepyListener(tweepy.streaming.StreamListener):
         """
         data = json.loads(raw_data)
 
-        try:
-            text = data['text']
-        except:
-            text = "fail"
-            return text
+        if not check_tweepy_data_json(data):
+            # print('useless tweet: %s', data['id'])
+            return True
+            
+        elif 'retweeted_status' in data.keys():
+            data = data['retweeted_status']
+            # print("this was a RT... ")
+            if not check_tweepy_data_json(data):
+                # print('useless tweet: %s', data['id'])
+                return True
+        
+        # else: # only text tweets get here alive
+        text = sub("\n", " ", data['text'])
+        if __name__ == '__main__':
+            print(text)
 
-        timestamp = int(time.time())
-        print(str(timestamp))
-
-        with open(os.path.join(datadir, '%s.txt' % timestamp), 'wa') as out:
+        ts = int(time() / (60 * 5))
+        print(str(ts))
+        with open(os.path.join(datadir, '%s.txt' % ts), 'a') as out:
             out.write(text + '\n')
 
         return True
 
-    def on_error(self, status_code):
+    def on_error(self, status_code = 228):
         print("oops: %s" % status_code)
-        if status_code == 420:
-            time.sleep(420)
+        sleep(int(status_code))
+        # else: sleep(120)
+        return True
 
 
 def main(creds=default_creds, debug=False):
-    listener = TweepyListener()
-
     auth = OAuthHandler(creds['consumer_key'], creds['consumer_secret'])
     auth.set_access_token(creds['access_token'], creds['access_secret'])
-    stream = tweepy.Stream(auth=auth, listener=listener)
 
     if debug:
-        print("credentials")
-        print(creds)
-        print('-------')
-        print("filters")
-        print(f)
-        print('-------')
+        print("credentials:\t\t%s\n" % creds)
+        print("filters:\t\t%s\n" % f)
         try:
             print(auth.get_username())
         except:
-            print('fail with auth')
+            print('auth failed')
 
+    stream = tweepy.Stream(auth=auth, listener=TweepyListener())
     return stream
 
 
 if __name__ == '__main__':
-    path_to_creds = 'credentials/credentials.json'
-    creds = get_credentials(path_to_creds)
+    creds = get_credentials('credentials/credentials.json')
 
-    filters = {'languages': 'ru', 'track': ' ,', 'locations': [60, 31, 59.5, 30]}
+    filters = {'languages': 'ru',
+               'track': 'в,a,я,с,и,о,у',
+               'locations': [60.6, 50.0, 55.2, 30.2]}
     f = make_filters_dict(filters)
 
     stream = main(creds, debug=True)
 
     while True:
         try:
-            stream.filter(follow=f['follow'], track=f['track'],
-                          languages=f['languages'],
-                          encoding=f['encoding'], filter_level=f['filter_level'])
+            stream.filter(follow=f['follow'],
+                          track=f['track'],
+                          languages=f['languages'])
         except:
-            print("oops")
+            print("oops, %s" % "an error")
+            break
